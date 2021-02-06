@@ -10,7 +10,8 @@
         "pageview-count",
         "tbfed-pagefooter",
         "popup",
-        "-sharing"
+        "-sharing",
+        "katex"
     ],
     "pluginsConfig": {
         "tbfed-pagefooter": {
