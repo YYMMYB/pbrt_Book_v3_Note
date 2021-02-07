@@ -60,7 +60,7 @@ for (const auto &light : lights) light->Preprocess(*this);
 
 渲染图片的过程是通过 `Integrator` 完成的(第14,15,16章).
 
-- `Integrator`在 core/integrator.h， core/integrator.cpp 中
+- `Integrator`在 core/integrator.h, core/integrator.cpp 中
   在 integrators/ 文件夹中有各种实现.
   - `Render()`
 
@@ -68,10 +68,37 @@ for (const auto &light : lights) light->Preprocess(*this);
   - `Preprocess()` 可选是否实现, 作用是在场景初始化完成后, 去做一些依赖于场景的计算
     (如, 依赖于光源总数的高速数据结构, 预计算整个场景的 radiance 分布).
   - `Sampler`
-    - 选出图片上需要进行光线跟踪的点
+    - 选出需要进行光线跟踪的点
     - 还有, 选出计算 <dev id="reref_1">[BSDF积分](#ref_1)</dev> 所需的位置. 如, 面光源上选择哪些点来计算光照(第7章).
   - `Camera` 控制视图, 镜头的参数(第6章)
     - `Film` 存储图像. 写入文件或显示到屏幕(第7.9章)
 
+## 主渲染循环
+
+在创建了 `Scene` 与 `Integrator` 后, 就会执行 `Integrator::Render()`, 进行渲染.
+![SamplerIntegrator::Render() 的数据流](img/Class%20Relationships.svg)
+其中 `Li()` 会计算某条光线(Ray)到达画面的辐射(radiance) *关于辐射这些概念这种东西, 参考[这里](A_辐射.md)*
+
+渲染时, 会将图像分解为多个像素的 tile, 每个 tile 都可以并行计算
+`SamplerIntegrator::Render()` 的流程:
+1. `Preprocess(scene, *sampler);`
+2. 并行渲染每个 tile
+3. 保存图像
+
+渲染 tile 的流程
+1. 计算 tile 总数
+2. 对每个 tile 并行渲染
+   1. 声明当前 tile 的 arena
+   2. 取得 `Sampler`, 通过克隆的方式
+   3. 计算当前 tile 的采样边界
+   4. 取得当前 tile 的 `FilmTile`, 
+
+`Li()`方法的实现通常将需要为每个辐射度计算临时分配少量内存.
+大量的内存分配结果很容易使系统的常规内存分配例程（例如malloc（）或new）不堪重负, 该例程必须维护并同步精心设计的内部数据结构, 以跟踪处理器之间的空闲内存区.
+我们把 `arena : MemoryArena` 传入 `Li()`, 来管理内存.
+`MemoryArena` 的实例不允许被未经同步的多个线程访问.
+
+----
 - <dev id="ref_1">[BSDF的积分](#reref_1)</dev>
 {% math %}L_{0}\left(\mathrm{p}, \omega_{0}\right)=L_{\mathrm{e}}\left(\mathrm{p}, \omega_{0}\right)+\int_{\mathrm{S}^{2}} f\left(\mathrm{p}, \omega_{0}, \omega_{\mathrm{i}}\right) L_{\mathrm{i}}\left(\mathrm{p}, \omega_{\mathrm{i}}\right)\left|\cos \theta_{\mathrm{i}}\right| \mathrm{d} \omega_{\mathrm{i}}{% endmath %}
+
