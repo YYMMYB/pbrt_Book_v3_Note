@@ -80,23 +80,58 @@ for (const auto &light : lights) light->Preprocess(*this);
 其中 `Li()` 会计算某条光线(Ray)到达画面的辐射(radiance) *关于辐射这些概念这种东西, 参考[这里](A_辐射.md)*
 
 渲染时, 会将图像分解为多个像素的 tile, 每个 tile 都可以并行计算
+
 `SamplerIntegrator::Render()` 的流程:
 1. `Preprocess(scene, *sampler);`
 2. 并行渲染每个 tile
-3. 保存图像
+3. 保存整个图像
 
 渲染 tile 的流程
+
 1. 计算 tile 总数
 2. 对每个 tile 并行渲染
-   1. 声明当前 tile 的 arena
-   2. 取得 `Sampler`, 通过克隆的方式
-   3. 计算当前 tile 的采样边界
-   4. 取得当前 tile 的 `FilmTile`, 
+   1. 声明当前 tile 的 arena.
+      `Li()`方法的实现通常将需要为每个辐射度计算临时分配少量内存.
+      大量的内存分配结果很容易使系统的常规内存分配例程（例如malloc（）或new）不堪重负, 该例程必须维护并同步精心设计的内部数据结构, 以跟踪处理器之间的空闲内存区.
+      我们把 `arena : MemoryArena` 传入 `Li()`, 来管理内存.
+      `MemoryArena` 的实例不允许被未经同步的多个线程访问.
+   3. 取得 `tileSampler : Sampler`, 通过克隆.
+   4. 计算当前 tile 的采样边界.
+   5. 取得当前 tile 的 `filmTile : FilmTile`.
+      `FilmTile` 会提供一个小缓存, 来存储当前 tile 中每个像素的值.
+   6. 渲染 tile 中的每个像素.
+      `tileSampler->StartPixel(pixel)` 开始采样. `pixel : Point2i`
+      `tileSampler->StartNextSample()` 判断是否还需要继续采样.
+      1. 初始化 `cameraSample : CameraSample = tileSampler->GetCameraSample(pixel)`, 它会记录产生图片上哪些位置需要产生射线.
+      2. 产生当前采样的射线.
+         `rayWeight` 表示当前射线的权重. 复杂的相机模型中, 到达胶片边缘 可能 比到达中心的射线, 权重更小.
+      3. 用`Li()`计算当前射线的辐射, 这是个纯虚函数, 每个子类必须实现该方法.
+          会返回`Spectrum`, 表示射线起点的 入射辐射(incident radiance).
+          其具有如下参数:
+         1. ray
+         2. scene
+         3. sampler: 通过蒙特卡洛积分计算光传输方程(light transport equation)时要用的采样器.
+         4. arena: 快速分配临时的内存. integrator 会假设在每次`Li()`执行完后, 这部分内存会被快速释放. 
+            所以不应该用这个来分配比当前射线的生命周期更长的内存.
+         5. depth: 在执行这次`Li()`之前, 光线以及从相机反射了多少次.
+      4. 然后就可以根据辐射更新图像了, 通过`FilmTile::AddSample()`
+      5. 最后释放内存, 通过`MemoryArena::Reset()`
+   7. 将`filmTile`交给最终图像, 通过`Film’s MergeFilmTile()`
 
-`Li()`方法的实现通常将需要为每个辐射度计算临时分配少量内存.
-大量的内存分配结果很容易使系统的常规内存分配例程（例如malloc（）或new）不堪重负, 该例程必须维护并同步精心设计的内部数据结构, 以跟踪处理器之间的空闲内存区.
-我们把 `arena : MemoryArena` 传入 `Li()`, 来管理内存.
-`MemoryArena` 的实例不允许被未经同步的多个线程访问.
+`Camera::GenerateRay()` 会根据采样点来产生射线.
+`Camera::GenerateRayDifferential()` 会给出 在图像上有一个像素差异的采样, 所产生的射线之间的信息.
+Ray differentials 用于从第10章中某些纹理函数中获得更好的结果, 
+从而可以计算纹理相对于像素间距的变化速度，这是纹理抗锯齿的关键组成部分.
+
+# Whitted 射线追踪的 Integrator
+
+这里实现基于 Whitted’s ray-tracing algorithm 的Integrator. 这个算法, 对于反射和折射光会进行精确计算, 但是无法计算间接照明.
+代码在 integrators/whitted.h, integrators/whitted.cpp 
+
+该算法会递归的计算反射与折射, 直到到达最大深度`WhittedIntegrator::maxDepth`.
+数据流如图所示:
+![WhittedIntegrator 的数据流](img/Surface%20Integration%20Class%20Relationships.svg)
+
 
 ----
 - <dev id="ref_1">[BSDF的积分](#reref_1)</dev>
